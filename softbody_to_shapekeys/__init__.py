@@ -56,9 +56,13 @@ def get_frame_range(context, obj=None):
         A tuple of (start_frame, end_frame)
     """
     if obj:
-        for mod in obj.modifiers:
-            if mod.type == "SOFT_BODY" and mod.point_cache:
-                return mod.point_cache.frame_start, mod.point_cache.frame_end
+        soft_body_mod = get_soft_body_modifier(obj)
+
+        if soft_body_mod:
+            cache = getattr(soft_body_mod, "point_cache", None)
+
+            if cache:
+                return cache.frame_start, cache.frame_end
 
     scene = context.scene
     return scene.frame_start, scene.frame_end
@@ -174,6 +178,11 @@ class OBJECT_OT_bake_soft_body_to_shape_keys(bpy.types.Operator):
         default=True,
     )
 
+    use_cache_range: bpy.props.BoolProperty(
+        name="Use Soft Body Cache Range",
+        default=True,
+    )
+
     @classmethod
     def poll(cls, context):
         """
@@ -200,6 +209,7 @@ class OBJECT_OT_bake_soft_body_to_shape_keys(bpy.types.Operator):
             The result of the operator
         """
         self.frame_start, self.frame_end = get_frame_range(context, context.object)
+        self.report({"INFO"}, f"Frame range: {self.frame_start} to {self.frame_end}")
         return context.window_manager.invoke_props_dialog(self)
 
     def execute(self, context):
@@ -214,6 +224,8 @@ class OBJECT_OT_bake_soft_body_to_shape_keys(bpy.types.Operator):
         """
         obj = context.object
         soft_body_mod = get_soft_body_modifier(obj)
+        if self.use_cache_range:
+            self.frame_start, self.frame_end = get_frame_range(context, obj)
 
         if not obj:
             self.report({"ERROR"}, "No active object selected")
@@ -345,6 +357,7 @@ classes = (
     OBJECT_OT_bake_soft_body_to_shape_keys,
 )
 
+auto_load.init()
 
 def register():
     """
