@@ -1,124 +1,159 @@
 bl_info = {
-    "name": "Bake Simulation To Shape Keys",
+    "name": "Bake Soft Body To Shape Keys",
     "author": "Akash Patel",
-    "version": (1, 0, 0),
+    "version": (1, 1, 0),
     "blender": (3, 6, 0),
     "location": "Object Right Click Menu",
-    "description": "Bake constant-topology evaluated mesh animation, such as soft body, into shape keys",
+    "description": "Bake Soft Body cache animation into shape keys",
     "category": "Object",
 }
 
 import bpy
 
 
-def has_soft_body_modifier(obj):
+def get_soft_body_modifier(obj):
     """
-    Check if the object has a soft body modifier.
+    Get the Soft Body modifier from the given object.
     
     Args:
-        obj: The object to check
+        obj: The Blender object to check
         
     Returns:
-        bool: True if the object has a soft body modifier, False otherwise
+        The Soft Body modifier or None if not found
     """
     if not obj:
-        return False
+        return None
 
-    return any(mod.type == "SOFT_BODY" for mod in obj.modifiers)
+    for mod in obj.modifiers:
+        if mod.type == "SOFT_BODY":
+            return mod
+
+    return None
 
 
-def get_frame_range(context):
+def get_frame_range(context, obj=None):
     """
-    Get the frame range from the scene.
+    Get the frame range for the Soft Body simulation.
     
     Args:
         context: The Blender context
+        obj: The Blender object to check (optional)
         
     Returns:
-        tuple: The start and end frame of the scene
+        A tuple of (start_frame, end_frame)
     """
+    if obj:
+        for mod in obj.modifiers:
+            if mod.type == "SOFT_BODY" and mod.point_cache:
+                return mod.point_cache.frame_start, mod.point_cache.frame_end
+
     scene = context.scene
     return scene.frame_start, scene.frame_end
 
 
-def get_evaluated_mesh(context, obj, frame):
-    """
-    Get the evaluated mesh for a given frame.
-    
-    Args:
-        context: The Blender context
-        obj: The object to evaluate
-        frame: The frame to evaluate
-        
-    Returns:
-        bpy.types.Mesh: The evaluated mesh
-    """
-    scene = context.scene
-    scene.frame_set(frame)
-    context.view_layer.update()
-
-    depsgraph = context.evaluated_depsgraph_get()
-    eval_obj = obj.evaluated_get(depsgraph)
-
-    return bpy.data.meshes.new_from_object(eval_obj, depsgraph=depsgraph)
-
-
-def clear_existing_baked_shape_keys(obj, prefix="SimFrame_"):
-    """
-    Clear existing baked shape keys from the object.
-    
-    Args:
-        obj: The object to clear shape keys from
-        prefix: The prefix of the shape keys to clear
-    """
-    if not obj.data.shape_keys:
-        return
-
-    keys = obj.data.shape_keys.key_blocks
-
-    # Remove generated frame keys only, preserve Basis and user keys.
-    for key in list(keys):
-        if key.name.startswith(prefix):
-            obj.shape_key_remove(key)
-
-
 def set_shape_key_influence(key, frame, value):
     """
-    Set the influence of a shape key at a given frame.
+    Set the influence of a shape key at a specific frame.
     
     Args:
-        key: The shape key to set
-        frame: The frame to set the influence at
-        value: The influence value to set
+        key: The shape key to modify
+        frame: The frame number
+        value: The influence value (0.0 to 1.0)
     """
     key.value = value
     key.keyframe_insert("value", frame=frame)
 
 
-class OBJECT_OT_bake_simulation_to_shape_keys(bpy.types.Operator):
+def collect_modifiers_after_soft_body(obj, soft_body_mod):
     """
-    Bake simulation to shape keys operator.
+    Collect all modifiers that come after the Soft Body modifier.
+    
+    Args:
+        obj: The Blender object to check
+        soft_body_mod: The Soft Body modifier
+        
+    Returns:
+        A list of modifiers that come after the Soft Body modifier
     """
-    bl_idname = "object.bake_simulation_to_shape_keys"
-    bl_label = "Bake Simulation To Shape Keys"
-    bl_description = "Bake this constant-topology simulation into animated shape keys"
+    found_soft_body = False
+    modifiers = []
+
+    for mod in obj.modifiers:
+        if mod == soft_body_mod:
+            found_soft_body = True
+            continue
+
+        if found_soft_body:
+            modifiers.append(mod)
+
+    return modifiers
+
+
+def get_evaluated_soft_body_mesh(context, obj, frame, soft_body_mod):
+    """
+    Get the evaluated mesh for the given object at the specified frame.
+    
+    Args:
+        context: The Blender context
+        obj: The Blender object to evaluate
+        frame: The frame number
+        soft_body_mod: The Soft Body modifier
+        
+    Returns:
+        The evaluated mesh
+    """
+    disabled_states = []
+
+    # Disable modifiers after Soft Body so Subdivision/etc. does not change vertex count.
+    for mod in collect_modifiers_after_soft_body(obj, soft_body_mod):
+        disabled_states.append((mod, mod.show_viewport))
+        mod.show_viewport = False
+
+    try:
+        context.scene.frame_set(frame)
+        context.view_layer.update()
+
+        depsgraph = context.evaluated_depsgraph_get()
+        eval_obj = obj.evaluated_get(depsgraph)
+
+        return bpy.data.meshes.new_from_object(eval_obj, depsgraph=depsgraph)
+
+    finally:
+        for mod, show_viewport in disabled_states:
+            mod.show_viewport = show_viewport
+
+
+def clear_existing_baked_shape_keys(obj, prefix):
+    """
+    Clear existing shape keys that match the given prefix.
+    
+    Args:
+        obj: The Blender object to clear shape keys from
+        prefix: The prefix to match
+    """
+    if not obj.data.shape_keys:
+        return
+
+    for key in list(obj.data.shape_keys.key_blocks):
+        if key.name.startswith(prefix):
+            obj.shape_key_remove(key)
+
+
+class OBJECT_OT_bake_soft_body_to_shape_keys(bpy.types.Operator):
+    """
+    Bake Soft Body simulation to shape keys.
+    """
+    bl_idname = "object.bake_soft_body_to_shape_keys"
+    bl_label = "Bake Soft Body To Shape Keys"
+    bl_description = "Bake this Soft Body cache into animated shape keys"
     bl_options = {"REGISTER", "UNDO"}
 
-    frame_start: bpy.props.IntProperty(
-        name="Start Frame",
-        default=1,
-        min=0,
-    )
-
-    frame_end: bpy.props.IntProperty(
-        name="End Frame",
-        default=250,
-        min=0,
-    )
+    frame_start: bpy.props.IntProperty(name="Start Frame", default=1, min=0)
+    frame_end: bpy.props.IntProperty(name="End Frame", default=250, min=0)
 
     key_prefix: bpy.props.StringProperty(
         name="Shape Key Prefix",
-        default="SimFrame_",
+        default="SoftBodyFrame_",
     )
 
     clear_existing: bpy.props.BoolProperty(
@@ -128,25 +163,30 @@ class OBJECT_OT_bake_simulation_to_shape_keys(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
+        """
+        Check if the operator can be executed.
+        
+        Args:
+            context: The Blender context
+            
+        Returns:
+            True if the operator can be executed, False otherwise
+        """
         obj = context.object
-        return (
-            obj is not None
-            and obj.type == "MESH"
-            and has_soft_body_modifier(obj)
-        )
+        return obj is not None and obj.type == "MESH" and get_soft_body_modifier(obj) is not None
 
     def invoke(self, context, event):
         """
-        Invoke the operator and show the properties dialog.
+        Invoke the operator.
         
         Args:
             context: The Blender context
             event: The mouse event
             
         Returns:
-            set: The return value
+            The result of the operator
         """
-        self.frame_start, self.frame_end = get_frame_range(context)
+        self.frame_start, self.frame_end = get_frame_range(context, context.object)
         return context.window_manager.invoke_props_dialog(self)
 
     def execute(self, context):
@@ -157,9 +197,10 @@ class OBJECT_OT_bake_simulation_to_shape_keys(bpy.types.Operator):
             context: The Blender context
             
         Returns:
-            set: The return value
+            The result of the operator
         """
         obj = context.object
+        soft_body_mod = get_soft_body_modifier(obj)
 
         if not obj:
             self.report({"ERROR"}, "No active object selected")
@@ -169,7 +210,7 @@ class OBJECT_OT_bake_simulation_to_shape_keys(bpy.types.Operator):
             self.report({"ERROR"}, "Selected object must be a mesh")
             return {"CANCELLED"}
 
-        if not has_soft_body_modifier(obj):
+        if not soft_body_mod:
             self.report({"ERROR"}, "Selected object does not have a Soft Body modifier")
             return {"CANCELLED"}
 
@@ -177,58 +218,60 @@ class OBJECT_OT_bake_simulation_to_shape_keys(bpy.types.Operator):
             self.report({"ERROR"}, "End frame must be greater than or equal to start frame")
             return {"CANCELLED"}
 
-        original_frame = context.scene.frame_current
         base_vertex_count = len(obj.data.vertices)
 
         if base_vertex_count == 0:
-            self.report({"ERROR"}, "Object has no vertices")
+            self.report({"ERROR"}, "Base mesh has no vertices")
             return {"CANCELLED"}
 
-        try:
-            test_mesh = get_evaluated_mesh(context, obj, self.frame_start)
-            test_vertex_count = len(test_mesh.vertices)
-            bpy.data.meshes.remove(test_mesh)
-        except Exception as exc:
-            context.scene.frame_set(original_frame)
-            self.report({"ERROR"}, f"Could not evaluate mesh: {exc}")
-            return {"CANCELLED"}
-
-        if test_vertex_count == 0:
-            context.scene.frame_set(original_frame)
-            self.report({"ERROR"}, "Evaluated mesh is empty at the start frame")
-            return {"CANCELLED"}
-
-        if test_vertex_count != base_vertex_count:
-            context.scene.frame_set(original_frame)
-            self.report(
-                {"ERROR"},
-                f"Vertex count mismatch at start frame. Base={base_vertex_count}, Evaluated={test_vertex_count}"
-            )
-            return {"CANCELLED"}
-
-        if self.clear_existing:
-            clear_existing_baked_shape_keys(obj, self.key_prefix)
-
-        if not obj.data.shape_keys:
-            obj.shape_key_add(name="Basis")
-
+        original_frame = context.scene.frame_current
         created_count = 0
         skipped_count = 0
 
         try:
+            test_mesh = get_evaluated_soft_body_mesh(
+                context,
+                obj,
+                self.frame_start,
+                soft_body_mod,
+            )
+
+            try:
+                if len(test_mesh.vertices) != base_vertex_count:
+                    self.report(
+                        {"ERROR"},
+                        f"Vertex count mismatch at start frame. "
+                        f"Base={base_vertex_count}, evaluated={len(test_mesh.vertices)}. "
+                        f"Make sure modifiers before Soft Body do not change topology."
+                    )
+                    return {"CANCELLED"}
+            finally:
+                bpy.data.meshes.remove(test_mesh)
+
+            if self.clear_existing:
+                clear_existing_baked_shape_keys(obj, self.key_prefix)
+
+            if not obj.data.shape_keys:
+                obj.shape_key_add(name="Basis")
+
             for frame in range(self.frame_start, self.frame_end + 1):
-                eval_mesh = get_evaluated_mesh(context, obj, frame)
+                eval_mesh = get_evaluated_soft_body_mesh(
+                    context,
+                    obj,
+                    frame,
+                    soft_body_mod,
+                )
 
                 try:
                     if len(eval_mesh.vertices) == 0:
                         skipped_count += 1
-                        print(f"Skipped frame {frame}: empty evaluated mesh")
                         continue
 
                     if len(eval_mesh.vertices) != base_vertex_count:
                         self.report(
                             {"ERROR"},
-                            f"Topology changed at frame {frame}. Shape keys require identical vertex counts"
+                            f"Topology changed at frame {frame}. "
+                            f"Base={base_vertex_count}, evaluated={len(eval_mesh.vertices)}"
                         )
                         return {"CANCELLED"}
 
@@ -237,13 +280,8 @@ class OBJECT_OT_bake_simulation_to_shape_keys(bpy.types.Operator):
                     for i, vert in enumerate(eval_mesh.vertices):
                         key.data[i].co = vert.co
 
-                    # Hidden before frame
                     set_shape_key_influence(key, frame - 1, 0.0)
-
-                    # Active on this frame
                     set_shape_key_influence(key, frame, 1.0)
-
-                    # Hidden after frame
                     set_shape_key_influence(key, frame + 1, 0.0)
 
                     created_count += 1
@@ -274,7 +312,7 @@ class OBJECT_OT_bake_simulation_to_shape_keys(bpy.types.Operator):
 
 def draw_soft_body_shape_key_menu(self, context):
     """
-    Draw the soft body shape key menu in the object context menu.
+    Draw the Soft Body to Shape Keys menu in the object context menu.
     
     Args:
         self: The menu object
@@ -282,22 +320,22 @@ def draw_soft_body_shape_key_menu(self, context):
     """
     obj = context.object
 
-    if obj and obj.type == "MESH" and has_soft_body_modifier(obj):
+    if obj and obj.type == "MESH" and get_soft_body_modifier(obj):
         self.layout.separator()
         self.layout.operator(
-            OBJECT_OT_bake_simulation_to_shape_keys.bl_idname,
-            icon="SHAPEKEY_DATA"
+            OBJECT_OT_bake_soft_body_to_shape_keys.bl_idname,
+            icon="SHAPEKEY_DATA",
         )
 
 
 classes = (
-    OBJECT_OT_bake_simulation_to_shape_keys,
+    OBJECT_OT_bake_soft_body_to_shape_keys,
 )
 
 
 def register():
     """
-    Register the addon classes.
+    Register the addon.
     """
     for cls in classes:
         bpy.utils.register_class(cls)
@@ -307,12 +345,13 @@ def register():
 
 def unregister():
     """
-    Unregister the addon classes.
+    Unregister the addon.
     """
     bpy.types.VIEW3D_MT_object_context_menu.remove(draw_soft_body_shape_key_menu)
 
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)
+
 
 
 if __name__ == "__main__":
