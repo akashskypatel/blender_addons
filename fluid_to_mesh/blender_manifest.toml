@@ -4,6 +4,7 @@ schema_version = "1.0.0"
 # Change the values according to your extension
 id = "fluid_cache_to_mesh_sequence"
 version = "1.0.0"
+website = "https://github.com/akashskypatel/blender_addons"
 name = "Fluid Cache To Mesh Sequence"
 tagline = "Convert a baked liquid fluid mesh cache into per-frame mesh objects"
 maintainer = "Akash Patel"

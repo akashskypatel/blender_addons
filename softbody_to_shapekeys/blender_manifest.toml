@@ -4,6 +4,7 @@ schema_version = "1.0.0"
 # Change the values according to your extension
 id = "softbody_to_shapekeys"
 version = "1.0.0"
+website = "https://github.com/akashskypatel/blender_addons"
 name = "Bake Softbody Simulation To Shape Keys"
 tagline = "Bake constant-topology evaluated mesh animation, such as soft body, into shape keys"
 maintainer = "Akash Patel"
