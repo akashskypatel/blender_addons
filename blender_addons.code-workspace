@@ -1,0 +1,20 @@
+{
+	"folders": [
+		{
+			"name": "blender_addons",
+			"path": "../blender_addons"
+		},
+		{
+			"name": "scripts",
+			"path": "../blender_addons/scripts"
+		},
+		{
+			"name": "fluid_to_mesh",
+			"path": "../blender_addons/fluid_to_mesh"
+		},
+		{
+			"name": "softbody_to_shapekeys",
+			"path": "../blender_addons/softbody_to_shapekeys"
+		}
+	]
+}
